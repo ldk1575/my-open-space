@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>공원 놀이대 — 알갱이로 담은 공간</title>
+<meta name="description" content="폰으로 한 바퀴 돌며 찍은 영상에서 만든 3D 가우시안 스플랫. 손가락이나 마우스로 돌려 볼 수 있습니다.">
+
+<style>
+  :root{
+    --bg:#0b0d10; --fg:#e8eaed; --dim:#9aa3ad; --line:#252a31;
+    --ok:#4ade80; --busy:#fbbf24; --bad:#f87171;
+    --panel:rgba(12,14,17,.86);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);overscroll-behavior:none}
+  body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic","맑은 고딕",sans-serif}
+  canvas{display:block;touch-action:none}
+
+  .panel{
+    position:fixed;z-index:10;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;backdrop-filter:blur(8px);
+  }
+  #steps{top:12px;left:12px;max-width:min(340px,calc(100vw - 24px))}
+  #steps h1{margin:0 0 8px;font-size:13px;font-weight:600;letter-spacing:.02em}
+  #steps ol{margin:0;padding-left:0;list-style:none;font-variant-numeric:tabular-nums}
+  #steps li{display:flex;gap:8px;align-items:flex-start;padding:2px 0;color:var(--dim)}
+  #steps li .dot{width:1.1em;flex:none;text-align:center}
+  #steps li[data-s="busy"]{color:var(--busy)}
+  #steps li[data-s="ok"]{color:var(--fg)}
+  #steps li[data-s="ok"] .dot{color:var(--ok)}
+  #steps li[data-s="bad"]{color:var(--bad)}
+  #steps .hint{display:block;color:var(--bad);font-size:12px;padding:4px 0 2px 1.9em;line-height:1.45}
+
+  #stats{bottom:12px;left:12px;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+  #stats b{color:var(--fg);font-weight:600}
+  #stats div{white-space:nowrap}
+
+  #tools{bottom:12px;right:12px;display:flex;gap:8px;padding:8px}
+  button{
+    font:inherit;font-size:13px;color:var(--fg);background:#171b21;
+    border:1px solid var(--line);border-radius:7px;padding:7px 12px;cursor:pointer;
+  }
+  button:hover{background:#1f242c}
+  button[aria-pressed="true"]{border-color:#4a5568;background:#222834}
+
+  #drop{
+    position:fixed;inset:0;z-index:20;display:none;place-items:center;
+    background:rgba(11,13,16,.9);border:2px dashed #3b434d;font-size:15px;color:var(--dim);
+  }
+  #drop.on{display:grid}
+
+  @media (max-width:520px){
+    #steps{font-size:13px;padding:10px 12px}
+    #stats{font-size:11px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ▼▼ 여기 한 줄만 바꾸면 다른 파일을 봅니다 ▼▼ -->
+<script>window.SPLAT_FILE = "scene.sog";</script>
+<!-- ▲▲ ─────────────────────────────────── ▲▲ -->
+
+<div class="panel" id="steps">
+  <h1>불러오는 중</h1>
+  <ol>
+    <li data-k="lib"><span class="dot">·</span><span>라이브러리 불러오기</span></li>
+    <li data-k="spark"><span class="dot">·</span><span>렌더러 넣기</span></li>
+    <li data-k="fetch"><span class="dot">·</span><span>파일 받기</span></li>
+    <li data-k="parse"><span class="dot">·</span><span>알갱이로 풀기</span></li>
+    <li data-k="fit"><span class="dot">·</span><span>크기 재기</span></li>
+  </ol>
+</div>
+
+<div class="panel" id="stats" hidden></div>
+
+<div class="panel" id="tools">
+  <button id="flip" aria-pressed="true" title="장면이 거꾸로 서면 누르세요">위아래 뒤집기</button>
+  <button id="reset" title="처음 시점으로">시점 초기화</button>
+</div>
+
+<div id="drop">스플랫 파일을 여기 떨어뜨리면 그것으로 다시 그립니다 &nbsp;(.sog · .ply · .spz · .splat · .ksplat)</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@sparkjsdev/spark": "https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.2.0/dist/spark.module.js"
+  }
+}
+</script>
+
+<script type="module">
+// ── 단계 표시 ────────────────────────────────────────────────────────────────
+// 실패한 단계에 "무엇을 봐야 하는지"를 같이 적는다. 검은 화면만 보고는 어디서
+// 막혔는지 알 수 없기 때문이다.
+const HINT = {
+  lib:   "CDN 이 막혔을 수 있습니다. 브라우저 개발자도구 ▸ 네트워크에서 three / spark 요청을 보세요.",
+  spark: "WebGL2 를 못 쓰는 브라우저일 수 있습니다. 다른 브라우저로 열어 보세요.",
+  fetch: "파일 이름이나 경로가 틀렸을 수 있습니다. 주소 뒤에 /" + "scene.sog 를 붙여 직접 내려받아지는지 보세요.",
+  parse: "형식 이름이 안 맞았을 수 있습니다. 확장자와 대응표를 보세요.",
+  fit:   "알갱이가 0개로 읽혔을 수 있습니다. 아래 알갱이 개수를 보세요.",
+};
+const li = k => document.querySelector(`#steps li[data-k="${k}"]`);
+function step(k, state, extra) {
+  const el = li(k); if (!el) return;
+  el.dataset.s = state;
+  el.querySelector(".dot").textContent = state === "ok" ? "✓" : state === "bad" ? "✗" : "◦";
+  if (state === "bad") {
+    const h = document.createElement("span");
+    h.className = "hint";
+    h.textContent = (extra ? extra + " — " : "") + (HINT[k] || "");
+    el.after(h);
+  }
+}
+const statsEl = document.getElementById("stats");
+const lines = {};
+function stat(k, html) {
+  lines[k] = html;
+  statsEl.hidden = false;
+  statsEl.innerHTML = Object.values(lines).join("");
+}
+
+// ── 1. 라이브러리 ────────────────────────────────────────────────────────────
+step("lib", "busy");
+let THREE, SparkRenderer, SplatMesh, OrbitControls;
+try {
+  THREE = await import("three");
+  ({ SparkRenderer, SplatMesh } = await import("@sparkjsdev/spark"));
+  ({ OrbitControls } = await import("three/addons/controls/OrbitControls.js"));
+  step("lib", "ok");
+} catch (e) {
+  step("lib", "bad", e.message); throw e;
+}
+
+// ── 2. 장면과 Spark 전용 렌더러 ──────────────────────────────────────────────
+step("spark", "busy");
+let scene, camera, renderer, controls, spark;
+try {
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 4000);
+  renderer = new THREE.WebGLRenderer({ antialias: false });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // ⚠ 이 두 줄이 핵심이다. Spark 는 알갱이를 그리는 전용 렌더러를 장면에 넣어야
+  //   비로소 화면에 나온다. scene.add(spark) 를 빼면 파일을 다 읽고 알갱이 개수까지
+  //   맞게 나오는데 화면만 검은 채로 있고 오류도 안 난다 — 제일 찾기 어려운 실수다.
+  spark = new SparkRenderer({ renderer });
+  scene.add(spark);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;      // 감쇠 — 손을 떼도 부드럽게 멈춘다
+  controls.dampingFactor = 0.08;
+  controls.zoomToCursor = true;
+  step("spark", "ok");
+} catch (e) {
+  step("spark", "bad", e.message); throw e;
+}
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ── 확장자 → 형식 이름 대응표 ────────────────────────────────────────────────
+// 확장자를 그대로 형식 이름으로 넘기면 안 된다. 특히 .sog 의 안쪽 이름은
+// pcsogszip 이고, 이름 하나만 달라도 뷰어가 파일을 통째로 거부한다.
+const FILE_TYPE = {
+  sog:    "pcsogszip",   // ← 확장자와 이름이 다른 유일한 항목
+  ply:    "ply",
+  spz:    "spz",
+  splat:  "splat",
+  ksplat: "ksplat",
+};
+const typeOf = name => FILE_TYPE[(name.split(".").pop() || "").toLowerCase()];
+
+// ── 3~5. 파일 받기 → 알갱이로 풀기 → 크기 재기 ───────────────────────────────
+let mesh = null;
+let flipped = true;   // 기본값 true. 이유는 applyFlip 주석에
+
+// map-anything 은 OpenCV 규약(+X 오른쪽, +Y **아래**, +Z 앞)으로 좌표를 준다.
+// 그대로 두면 장면이 거꾸로 선다. X축으로 180° 돌려 Y를 위로 세운 것이 기본값이고,
+// 다른 도구로 만든 파일을 떨어뜨렸을 때를 위해 단추로 되돌릴 수 있게 했다.
+function applyFlip() {
+  if (!mesh) return;
+  if (flipped) mesh.quaternion.set(1, 0, 0, 0);   // X축 180°
+  else         mesh.quaternion.set(0, 0, 0, 1);   // 그대로
+}
+
+let home = null;   // 처음 맞춰 둔 시점
+
+async function load(source) {
+  const isFile = source instanceof File;
+  const name = isFile ? source.name : source;
+  const fileType = typeOf(name);
+
+  if (mesh) { scene.remove(mesh); mesh.dispose?.(); mesh = null; }
+  ["fetch", "parse", "fit"].forEach(k => {
+    const el = li(k); el.dataset.s = ""; el.querySelector(".dot").textContent = "·";
+    if (el.nextElementSibling?.className === "hint") el.nextElementSibling.remove();
+  });
+  document.querySelector("#steps h1").textContent = "불러오는 중";
+
+  // 3. 파일 받기 — 크기와 걸린 시간을 재려고 직접 받는다
+  step("fetch", "busy");
+  let bytes, secs;
+  try {
+    const t0 = performance.now();
+    if (isFile) {
+      bytes = new Uint8Array(await source.arrayBuffer());
+    } else {
+      const res = await fetch(name, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      bytes = new Uint8Array(await res.arrayBuffer());
+    }
+    secs = (performance.now() - t0) / 1000;
+    step("fetch", "ok");
+    stat("file", `<div><b>${name}</b> · ${(bytes.length / 2 ** 20).toFixed(1)} MB` +
+                 ` · 받는 데 <b>${secs.toFixed(1)}초</b></div>`);
+  } catch (e) {
+    step("fetch", "bad", e.message); return;
+  }
+
+  // 4. 알갱이로 풀기
+  step("parse", "busy");
+  try {
+    if (!fileType) throw new Error(`모르는 확장자입니다: ${name}`);
+    mesh = new SplatMesh({ fileBytes: bytes, fileName: name, fileType });
+    scene.add(mesh);
+    applyFlip();
+    await mesh.initialized;            // Promise 다. 다 풀릴 때까지 기다린다
+    const n = mesh.numSplats ?? mesh.packedSplats?.numSplats ?? 0;
+    if (!n) throw new Error("알갱이가 0개로 읽혔습니다");
+    step("parse", "ok");
+    stat("count", `<div>알갱이 <b>${n.toLocaleString("ko-KR")}</b>개` +
+                  ` · 알갱이당 <b>${(bytes.length / n).toFixed(1)}</b>바이트</div>`);
+  } catch (e) {
+    step("parse", "bad", e.message); return;
+  }
+
+  // 5. 크기 재기 — Spark 가 주는 자로 잰다
+  //    three.js 의 Box3().setFromObject(mesh) 는 알갱이 덩어리에 대해 **빈 상자**를
+  //    돌려준다. 알갱이는 보통의 정점 버퍼가 아니라 텍스처에 담겨 있어서 three.js 가
+  //    읽을 수 있는 geometry 가 없기 때문이다. Spark 의 getBoundingBox 를 써야 한다.
+  step("fit", "busy");
+  try {
+    const box = mesh.getBoundingBox(true);      // 알갱이 중심들만으로 잰다
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const center = sphere.center.clone();
+    const radius = sphere.radius;
+    const diag = box.getSize(new THREE.Vector3()).length();
+    if (!isFinite(radius) || radius === 0) throw new Error("크기가 0으로 나왔습니다");
+
+    center.applyQuaternion(mesh.quaternion);    // 뒤집은 것을 반영
+    // 비스듬히 위에서 내려다보는 자리에 둔다. 눈높이에서 보면 바닥에 깔린 알갱이가
+    // 화면을 덮어 대상이 안 보인다.
+    // 거리는 **대각선이 아니라 바깥 공 반지름**으로 잡는다. 바닥처럼 납작한 장면에서는
+    // 대각선이 실제 덩치보다 크게 나와, 그 값으로 거리를 잡으면 카메라가 점 구름
+    // 안쪽에 들어가 화면이 검게 나온다.
+    const dir = new THREE.Vector3(0.40, 0.44, 0.81).normalize();
+    home = {
+      target: center.clone(),
+      pos: center.clone().add(dir.multiplyScalar(radius * 2.2)),
+    };
+    resetView();
+    camera.near = Math.max(radius / 2000, 0.005);
+    camera.far  = radius * 60;
+    camera.updateProjectionMatrix();
+    controls.minDistance = radius * 0.05;
+    controls.maxDistance = radius * 12;
+    step("fit", "ok");
+    stat("size", `<div>장면 대각선 <b>${diag.toFixed(1)}</b></div>`);
+  } catch (e) {
+    step("fit", "bad", e.message); return;
+  }
+
+  document.querySelector("#steps h1").textContent = "다 됐습니다 — 끌어서 돌려 보세요";
+}
+
+function resetView() {
+  if (!home) return;
+  camera.position.copy(home.pos);
+  controls.target.copy(home.target);
+  controls.update();
+}
+
+document.getElementById("flip").addEventListener("click", (e) => {
+  flipped = !flipped;
+  e.currentTarget.setAttribute("aria-pressed", String(flipped));
+  applyFlip();
+});
+document.getElementById("reset").addEventListener("click", resetView);
+
+// ── 파일을 끌어다 놓으면 그것으로 다시 그린다 ────────────────────────────────
+const dropEl = document.getElementById("drop");
+addEventListener("dragover", e => { e.preventDefault(); dropEl.classList.add("on"); });
+addEventListener("dragleave", e => { if (e.relatedTarget === null) dropEl.classList.remove("on"); });
+addEventListener("drop", e => {
+  e.preventDefault(); dropEl.classList.remove("on");
+  const f = e.dataTransfer?.files?.[0];
+  if (f) load(f);
+});
+
+// ── 그리기 ───────────────────────────────────────────────────────────────────
+// 화면에 안 보이는 동안에는 그리지 않는다. 다른 탭으로 넘어간 뒤에도 초당 예순 번씩
+// 그릴 이유가 없고, 폰에서는 그게 그대로 배터리와 발열이 된다.
+renderer.setAnimationLoop(() => {
+  if (document.hidden) return;
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+load(window.SPLAT_FILE);
+</script>
+</body>
+</html>
