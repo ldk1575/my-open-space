@@ -291,8 +291,9 @@ async function load(source) {
     step("fit", "bad", e.message); return;
   }
 
-  document.querySelector("#steps h1").textContent = "다 됐습니다 — 끌어서 돌려 보세요";
-  framesSinceReady = 0;
+  // 여기서 "다 됐습니다"라고 쓰면 안 된다. 파일은 다 받았지만 알갱이 226만 개를
+  // 화면 깊이 순서대로 정렬하는 데 몇 초가 더 걸리고, 그 사이 화면은 아직 비어 있다.
+  document.querySelector("#steps h1").textContent = "알갱이를 화면에 올리는 중…";
   ready = true;
 }
 
@@ -323,16 +324,39 @@ addEventListener("drop", e => {
 // ── 그리기 ───────────────────────────────────────────────────────────────────
 // 화면에 안 보이는 동안에는 그리지 않는다. 다른 탭으로 넘어간 뒤에도 초당 예순 번씩
 // 그릴 이유가 없고, 폰에서는 그게 그대로 배터리와 발열이 된다.
-let ready = false, framesSinceReady = 0;
+let ready = false, posterGone = false, tick = 0;
 const posterEl = document.getElementById("poster");
+
+// 대표 사진을 언제 걷을지 — 프레임 수로 짐작하면 안 된다. 정렬에 걸리는 시간은
+// 알갱이 개수와 기기 성능에 따라 몇 배씩 달라진다. 그래서 **캔버스를 직접 읽어**
+// 무엇이라도 그려졌는지 보고 걷는다.
+const gl = renderer.getContext();
+const S = 48;                         // 화면 가운데 48x48 만 읽는다 (읽기는 비싼 연산이다)
+const buf = new Uint8Array(S * S * 4);
+function somethingDrawn() {
+  const x = Math.max(0, (gl.drawingBufferWidth  >> 1) - (S >> 1));
+  const y = Math.max(0, (gl.drawingBufferHeight >> 1) - (S >> 1));
+  gl.readPixels(x, y, S, S, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  for (let i = 0; i < buf.length; i += 4) {
+    if (buf[i] > 8 || buf[i + 1] > 8 || buf[i + 2] > 8) return true;
+  }
+  return false;
+}
 
 renderer.setAnimationLoop(() => {
   if (document.hidden) return;
   controls.update();
   renderer.render(scene, camera);
-  // 알갱이가 실제로 몇 프레임 그려진 뒤에 사진을 걷는다. 파일을 다 받은 직후에는
-  // 아직 정렬이 안 끝나 화면이 비어 있어서, 그때 걷으면 검은 화면이 보인다.
-  if (ready && ++framesSinceReady === 90) posterEl.classList.add("gone");
+
+  // 10프레임마다 한 번만 확인한다. 30초가 지나면 그려졌든 아니든 걷는다 —
+  // 사진이 영원히 남아 뷰어를 가리는 쪽이 더 나쁘다.
+  if (ready && !posterGone && ++tick % 10 === 0) {
+    if (somethingDrawn() || tick > 1800) {
+      posterGone = true;
+      posterEl.classList.add("gone");
+      document.querySelector("#steps h1").textContent = "다 됐습니다 — 끌어서 돌려 보세요";
+    }
+  }
 });
 
 load(window.SPLAT_FILE);
