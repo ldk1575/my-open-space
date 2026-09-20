@@ -354,6 +354,10 @@ renderer.setAnimationLoop(() => {
     if (somethingDrawn() || tick > 1800) {
       posterGone = true;
       posterEl.classList.add("gone");
+      // CSS 전환만 걸어 두면 안 된다. 알갱이 226만 개를 그리느라 프레임이 드물어서
+      // opacity 전환이 기어가다 0.94 쯤에서 멈춘 채 사진이 계속 화면을 덮었다.
+      // 그래서 1초 뒤에 요소를 아예 걷어낸다 — 전환이 됐든 안 됐든 사라진다.
+      setTimeout(() => posterEl.remove(), 1000);
       document.querySelector("#steps h1").textContent = "다 됐습니다 — 끌어서 돌려 보세요";
     }
   }
