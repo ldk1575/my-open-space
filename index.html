@@ -50,6 +50,13 @@
   }
   #drop.on{display:grid}
 
+  /* 대표 사진 — 알갱이가 화면에 나오기 전까지 깔아 둔다 */
+  #poster{
+    position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:5;
+    opacity:1;transition:opacity .9s ease-out;filter:brightness(.5) saturate(.75);
+  }
+  #poster.gone{opacity:0;pointer-events:none}
+
   @media (max-width:520px){
     #steps{font-size:13px;padding:10px 12px}
     #stats{font-size:11px}
@@ -61,6 +68,11 @@
 <!-- ▼▼ 여기 한 줄만 바꾸면 다른 파일을 봅니다 ▼▼ -->
 <script>window.SPLAT_FILE = "scene.sog";</script>
 <!-- ▲▲ ─────────────────────────────────── ▲▲ -->
+
+<!-- 불러오는 동안 대표 사진을 깔아 둔다. 빈 칸이 있으면 고장으로 보이고,
+     사진 한 장이 있으면 기다린다. 알갱이 226만 개는 다 받은 뒤에도 정렬에
+     몇 초가 더 들어서, 그 틈을 이 사진이 메운다. -->
+<img id="poster" src="frames/f00.jpg" alt="공원 놀이대">
 
 <div class="panel" id="steps">
   <h1>불러오는 중</h1>
@@ -280,6 +292,8 @@ async function load(source) {
   }
 
   document.querySelector("#steps h1").textContent = "다 됐습니다 — 끌어서 돌려 보세요";
+  framesSinceReady = 0;
+  ready = true;
 }
 
 function resetView() {
@@ -309,10 +323,16 @@ addEventListener("drop", e => {
 // ── 그리기 ───────────────────────────────────────────────────────────────────
 // 화면에 안 보이는 동안에는 그리지 않는다. 다른 탭으로 넘어간 뒤에도 초당 예순 번씩
 // 그릴 이유가 없고, 폰에서는 그게 그대로 배터리와 발열이 된다.
+let ready = false, framesSinceReady = 0;
+const posterEl = document.getElementById("poster");
+
 renderer.setAnimationLoop(() => {
   if (document.hidden) return;
   controls.update();
   renderer.render(scene, camera);
+  // 알갱이가 실제로 몇 프레임 그려진 뒤에 사진을 걷는다. 파일을 다 받은 직후에는
+  // 아직 정렬이 안 끝나 화면이 비어 있어서, 그때 걷으면 검은 화면이 보인다.
+  if (ready && ++framesSinceReady === 90) posterEl.classList.add("gone");
 });
 
 load(window.SPLAT_FILE);
