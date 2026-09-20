@@ -59,7 +59,11 @@
 
   @media (max-width:520px){
     #steps{font-size:13px;padding:10px 12px}
-    #stats{font-size:11px}
+    /* 좁은 화면에서는 측정값 패널과 단추가 좌우로 나란히 놓이면 겹친다.
+       위아래로 쌓고, 측정값은 줄바꿈을 허용한다. */
+    #tools{bottom:12px;left:12px;right:12px;justify-content:flex-end}
+    #stats{bottom:64px;left:12px;right:12px;font-size:11px}
+    #stats div{white-space:normal}
   }
 </style>
 </head>
